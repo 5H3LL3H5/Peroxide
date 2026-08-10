@@ -7,16 +7,16 @@ use std::{
 use anyhow::{bail, Result};
 use matrixmultiply::CGemmOption;
 use num_complex::Complex;
+use num_traits::{One, Zero};
 use peroxide_num::{ExpLogOps, PowOps, TrigOps};
-use rand_distr::num_traits::{One, Zero};
 
 use crate::{
     complex::C64,
-    structure::matrix::Shape,
+    structure::matrix::{matrix, Matrix, Shape},
     traits::fp::{FPMatrix, FPVector},
     traits::general::Algorithm,
     traits::math::{InnerProduct, LinearOp, MatrixProduct, Norm, Normed, Vector},
-    traits::matrix::{Form, LinearAlgebra, MatrixTrait, SolveKind, PQLU, QR, SVD, UPLO, WAZD},
+    traits::matrix::{Form, LinearAlgebra, MatrixTrait, SolveKind, PQLU, QR, SVD, WAZD},
     traits::mutable::MutMatrix,
     util::low_level::{copy_vec_ptr, swap_vec_ptr},
     util::non_macro::ConcatenateError,
@@ -25,30 +25,140 @@ use crate::{
 
 /// R-like complex matrix structure
 ///
+/// The fields are private to protect the invariant `data.len() == row * col`,
+/// which the internal unsafe code relies on. Construct complex matrices with
+/// [`cmatrix`] and friends, and read the dimensions back with
+/// [`ComplexMatrix::nrow`], [`ComplexMatrix::ncol`], and
+/// [`ComplexMatrix::layout`].
+///
 /// # Examples
 ///
 /// ```rust
 /// use peroxide::fuga::*;
-/// use peroxide::complex::matrix::ComplexMatrix;
+/// use peroxide::complex::matrix::cmatrix;
 ///
-/// let v1 = ComplexMatrix {
-/// data: vec![
+/// let v1 = cmatrix(vec![
 ///     C64::new(1f64, 1f64),
 ///     C64::new(2f64, 2f64),
 ///     C64::new(3f64, 3f64),
 ///     C64::new(4f64, 4f64),
-/// ],
-/// row: 2,
-/// col: 2,
-/// shape: Row,
-/// }; // [[1+1i,2+2i],[3+3i,4+4i]]
+/// ], 2, 2, Row); // [[1+1i,2+2i],[3+3i,4+4i]]
+/// assert_eq!(v1.nrow(), 2);
+/// assert_eq!(v1.ncol(), 2);
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct ComplexMatrix {
-    pub data: Vec<C64>,
-    pub row: usize,
-    pub col: usize,
-    pub shape: Shape,
+    pub(crate) data: Vec<C64>,
+    pub(crate) row: usize,
+    pub(crate) col: usize,
+    pub(crate) shape: Shape,
+}
+
+impl ComplexMatrix {
+    /// Number of rows
+    pub fn nrow(&self) -> usize {
+        self.row
+    }
+
+    /// Number of columns
+    pub fn ncol(&self) -> usize {
+        self.col
+    }
+
+    /// Storage order of the underlying buffer (row-major or column-major)
+    pub fn layout(&self) -> Shape {
+        self.shape
+    }
+
+    /// Consume the matrix and return the underlying buffer in storage order
+    pub fn into_vec(self) -> Vec<C64> {
+        self.data
+    }
+
+    /// Trace of a square complex matrix (sum of the diagonal entries)
+    ///
+    /// # Panics
+    /// Panics if the matrix is not square.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use peroxide::fuga::*;
+    /// use peroxide::complex::matrix::cmatrix;
+    ///
+    /// let a = cmatrix(vec![
+    ///     C64::new(1f64, 1f64),
+    ///     C64::new(2f64, 2f64),
+    ///     C64::new(3f64, 3f64),
+    ///     C64::new(4f64, -1f64),
+    /// ], 2, 2, Row);
+    /// assert_eq!(a.trace(), C64::new(5f64, 0f64));
+    /// ```
+    pub fn trace(&self) -> C64 {
+        self.diag().into_iter().sum()
+    }
+
+    /// Hermitian conjugate (conjugate transpose)
+    ///
+    /// # Examples
+    /// ```rust
+    /// use peroxide::fuga::*;
+    /// use peroxide::complex::matrix::cmatrix;
+    ///
+    /// let a = cmatrix(vec![
+    ///     C64::new(1f64, 1f64),
+    ///     C64::new(2f64, -1f64),
+    ///     C64::new(0f64, 2f64),
+    ///     C64::new(3f64, 0f64),
+    /// ], 2, 2, Row);
+    /// let ah = a.h();
+    /// assert_eq!(ah[(0, 1)], C64::new(0f64, -2f64));
+    /// assert_eq!(ah[(1, 0)], C64::new(2f64, 1f64));
+    /// ```
+    pub fn h(&self) -> Self {
+        let mut m = self.transpose();
+        for x in m.as_mut_slice() {
+            *x = x.conj();
+        }
+        m
+    }
+
+    /// Real part as a real matrix
+    ///
+    /// # Examples
+    /// ```rust
+    /// use peroxide::fuga::*;
+    /// use peroxide::complex::matrix::cmatrix;
+    ///
+    /// let a = cmatrix(vec![C64::new(1f64, 2f64), C64::new(3f64, 4f64)], 1, 2, Row);
+    /// assert_eq!(a.real()[(0, 1)], 3f64);
+    /// ```
+    pub fn real(&self) -> Matrix {
+        matrix(
+            self.data.iter().map(|c| c.re).collect::<Vec<f64>>(),
+            self.row,
+            self.col,
+            self.shape,
+        )
+    }
+
+    /// Imaginary part as a real matrix
+    ///
+    /// # Examples
+    /// ```rust
+    /// use peroxide::fuga::*;
+    /// use peroxide::complex::matrix::cmatrix;
+    ///
+    /// let a = cmatrix(vec![C64::new(1f64, 2f64), C64::new(3f64, 4f64)], 1, 2, Row);
+    /// assert_eq!(a.imag()[(0, 1)], 4f64);
+    /// ```
+    pub fn imag(&self) -> Matrix {
+        matrix(
+            self.data.iter().map(|c| c.im).collect::<Vec<f64>>(),
+            self.row,
+            self.col,
+            self.shape,
+        )
+    }
 }
 
 // =============================================================================
@@ -64,22 +174,29 @@ pub struct ComplexMatrix {
 /// use peroxide::fuga::*;
 /// use peroxide::complex::matrix::cmatrix;
 ///
-/// fn main() {
-///     let a = cmatrix(vec![C64::new(1f64, 1f64),
-///                       C64::new(2f64, 2f64),
-///                       C64::new(3f64, 3f64),
-///                       C64::new(4f64, 4f64)],
-///                    2, 2, Row
-///     );
-///     a.col.print(); // Print matrix column
-/// }
+///  let a = cmatrix(vec![C64::new(1f64, 1f64),
+///                    C64::new(2f64, 2f64),
+///                    C64::new(3f64, 3f64),
+///                    C64::new(4f64, 4f64)],
+///                 2, 2, Row
+///  );
+///  a.ncol().print(); // Print number of columns
 /// ```
 pub fn cmatrix<T>(v: Vec<T>, r: usize, c: usize, shape: Shape) -> ComplexMatrix
 where
     T: Into<C64>,
 {
+    let data = v.into_iter().map(|t| t.into()).collect::<Vec<C64>>();
+    assert_eq!(
+        data.len(),
+        r * c,
+        "cmatrix: data length ({}) does not match row * col ({} * {})",
+        data.len(),
+        r,
+        c
+    );
     ComplexMatrix {
-        data: v.into_iter().map(|t| t.into()).collect::<Vec<C64>>(),
+        data,
         row: r,
         col: c,
         shape,
@@ -103,20 +220,18 @@ where
 /// use peroxide::fuga::*;
 /// use peroxide::complex::matrix::*;
 ///
-/// fn main() {
-///     let a = py_cmatrix(vec![vec![C64::new(1f64, 1f64),
-///                                         C64::new(2f64, 2f64)],
-///                                    vec![C64::new(3f64, 3f64),
-///                                         C64::new(4f64, 4f64)]
-///     ]);
-///     let b = cmatrix(vec![C64::new(1f64, 1f64),
-///                                 C64::new(2f64, 2f64),
-///                                 C64::new(3f64, 3f64),
-///                                 C64::new(4f64, 4f64)],
-///                             2, 2, Row
-///     );
-///     assert_eq!(a, b);
-/// }
+///  let a = py_cmatrix(vec![vec![C64::new(1f64, 1f64),
+///                                      C64::new(2f64, 2f64)],
+///                                 vec![C64::new(3f64, 3f64),
+///                                      C64::new(4f64, 4f64)]
+///  ]);
+///  let b = cmatrix(vec![C64::new(1f64, 1f64),
+///                              C64::new(2f64, 2f64),
+///                              C64::new(3f64, 3f64),
+///                              C64::new(4f64, 4f64)],
+///                          2, 2, Row
+///  );
+///  assert_eq!(a, b);
 /// ```
 pub fn py_cmatrix<T>(v: Vec<Vec<T>>) -> ComplexMatrix
 where
@@ -142,17 +257,15 @@ where
 /// use peroxide::fuga::*;
 /// use peroxide::complex::matrix::*;
 ///
-/// fn main() {
-///     let a = ml_cmatrix("1.0+1.0i 2.0+2.0i;
-///                                3.0+3.0i 4.0+4.0i");
-///     let b = cmatrix(vec![C64::new(1f64, 1f64),
-///                                 C64::new(2f64, 2f64),
-///                                 C64::new(3f64, 3f64),
-///                                 C64::new(4f64, 4f64)],
-///                             2, 2, Row
-///     );
-///     assert_eq!(a, b);
-/// }
+///  let a = ml_cmatrix("1.0+1.0i 2.0+2.0i;
+///                             3.0+3.0i 4.0+4.0i");
+///  let b = cmatrix(vec![C64::new(1f64, 1f64),
+///                              C64::new(2f64, 2f64),
+///                              C64::new(3f64, 3f64),
+///                              C64::new(4f64, 4f64)],
+///                          2, 2, Row
+///  );
+///  assert_eq!(a, b);
 /// ```
 pub fn ml_cmatrix(s: &str) -> ComplexMatrix {
     let str_row = s.split(";").collect::<Vec<&str>>();
@@ -277,9 +390,9 @@ impl MatrixTrait for ComplexMatrix {
     ///                                 C64::new(4f64, 4f64)],
     ///                             2, 2, Row
     ///     );
-    /// assert_eq!(a.shape, Row);
+    /// assert_eq!(a.layout(), Row);
     /// let b = a.change_shape();
-    /// assert_eq!(b.shape, Col);
+    /// assert_eq!(b.layout(), Col);
     /// ```
     fn change_shape(&self) -> Self {
         let r = self.row;
@@ -291,17 +404,17 @@ impl MatrixTrait for ComplexMatrix {
 
         match self.shape {
             Shape::Row => {
-                for i in 0..l {
+                for (i, slot) in data.iter_mut().enumerate().take(l) {
                     let s = (i * c) % l;
-                    data[i] = ref_data[s];
+                    *slot = ref_data[s];
                 }
                 data[l] = ref_data[l];
                 cmatrix(data, r, c, Shape::Col)
             }
             Shape::Col => {
-                for i in 0..l {
+                for (i, slot) in data.iter_mut().enumerate().take(l) {
                     let s = (i * r) % l;
-                    data[i] = ref_data[s];
+                    *slot = ref_data[s];
                 }
                 data[l] = ref_data[l];
                 cmatrix(data, r, c, Shape::Row)
@@ -326,9 +439,9 @@ impl MatrixTrait for ComplexMatrix {
     ///     ],
     ///     2, 2, Row
     /// );
-    /// assert_eq!(a.shape, Row);
+    /// assert_eq!(a.layout(), Row);
     /// a.change_shape_mut();
-    /// assert_eq!(a.shape, Col);
+    /// assert_eq!(a.layout(), Col);
     /// ```
     fn change_shape_mut(&mut self) {
         let r = self.row;
@@ -397,10 +510,10 @@ impl MatrixTrait for ComplexMatrix {
             };
             return format!(
                 "Result is too large to print - {}x{}\n only print {}x{} parts:\n{}",
-                self.row.to_string(),
-                self.col.to_string(),
-                key_row.to_string(),
-                key_col.to_string(),
+                self.row,
+                self.col,
+                key_row,
+                key_col,
                 part.spread()
             );
         }
@@ -412,7 +525,7 @@ impl MatrixTrait for ComplexMatrix {
             .map(
                 |x| min(format!("{:.4}", x).len(), x.to_string().len()), // Choose minimum of approx vs normal
             )
-            .fold(0, |x, y| max(x, y))
+            .fold(0, max)
             + 1;
 
         if space < 5 {
@@ -447,7 +560,7 @@ impl MatrixTrait for ComplexMatrix {
             result.push('\n');
         }
 
-        return result;
+        result
     }
 
     /// Extract Column
@@ -459,15 +572,13 @@ impl MatrixTrait for ComplexMatrix {
     /// use peroxide::fuga::*;
     /// use peroxide::complex::matrix::*;
     ///
-    /// fn main() {
-    ///     let a = cmatrix(vec![C64::new(1f64, 1f64),
-    ///                             C64::new(2f64, 2f64),
-    ///                             C64::new(3f64, 3f64),
-    ///                             C64::new(4f64, 4f64)],
-    ///                             2, 2, Row
-    ///         );
-    ///     assert_eq!(a.col(0), vec![C64::new(1f64, 1f64), C64::new(3f64, 3f64)]);
-    /// }
+    ///  let a = cmatrix(vec![C64::new(1f64, 1f64),
+    ///                          C64::new(2f64, 2f64),
+    ///                          C64::new(3f64, 3f64),
+    ///                          C64::new(4f64, 4f64)],
+    ///                          2, 2, Row
+    ///      );
+    ///  assert_eq!(a.col(0), vec![C64::new(1f64, 1f64), C64::new(3f64, 3f64)]);
     /// ```
     fn col(&self, index: usize) -> Vec<C64> {
         assert!(index < self.col);
@@ -487,15 +598,13 @@ impl MatrixTrait for ComplexMatrix {
     /// use peroxide::fuga::*;
     /// use peroxide::complex::matrix::*;
     ///
-    /// fn main() {
-    ///     let a = cmatrix(vec![C64::new(1f64, 1f64),
-    ///                             C64::new(2f64, 2f64),
-    ///                             C64::new(3f64, 3f64),
-    ///                             C64::new(4f64, 4f64)],
-    ///                             2, 2, Row
-    ///         );
-    ///     assert_eq!(a.row(0), vec![C64::new(1f64, 1f64), C64::new(2f64, 2f64)]);
-    /// }
+    ///  let a = cmatrix(vec![C64::new(1f64, 1f64),
+    ///                          C64::new(2f64, 2f64),
+    ///                          C64::new(3f64, 3f64),
+    ///                          C64::new(4f64, 4f64)],
+    ///                          2, 2, Row
+    ///      );
+    ///  assert_eq!(a.row(0), vec![C64::new(1f64, 1f64), C64::new(2f64, 2f64)]);
     /// ```
     fn row(&self, index: usize) -> Vec<C64> {
         assert!(index < self.row);
@@ -515,15 +624,13 @@ impl MatrixTrait for ComplexMatrix {
     /// use peroxide::fuga::*;
     /// use peroxide::complex::matrix::*;
     ///
-    /// fn main() {
-    ///     let a = cmatrix(vec![C64::new(1f64, 1f64),
-    ///                                 C64::new(2f64, 2f64),
-    ///                                 C64::new(3f64, 3f64),
-    ///                                 C64::new(4f64, 4f64)],
-    ///                             2, 2, Row
-    ///          );
-    ///     assert_eq!(a.diag(), vec![C64::new(1f64, 1f64) ,C64::new(4f64, 4f64)]);
-    /// }
+    ///  let a = cmatrix(vec![C64::new(1f64, 1f64),
+    ///                              C64::new(2f64, 2f64),
+    ///                              C64::new(3f64, 3f64),
+    ///                              C64::new(4f64, 4f64)],
+    ///                          2, 2, Row
+    ///       );
+    ///  assert_eq!(a.diag(), vec![C64::new(1f64, 1f64) ,C64::new(4f64, 4f64)]);
     /// ```
     fn diag(&self) -> Vec<C64> {
         let mut container = vec![Complex::zero(); self.row];
@@ -532,8 +639,8 @@ impl MatrixTrait for ComplexMatrix {
         assert_eq!(r, c);
 
         let c2 = c + 1;
-        for i in 0..r {
-            container[i] = self.data[i * c2];
+        for (i, slot) in container.iter_mut().enumerate().take(r) {
+            *slot = self.data[i * c2];
         }
         container
     }
@@ -607,8 +714,8 @@ impl MatrixTrait for ComplexMatrix {
     /// To send `Matrix` to `inline-python`
     fn to_vec(&self) -> Vec<Vec<C64>> {
         let mut result = vec![vec![Complex::zero(); self.col]; self.row];
-        for i in 0..self.row {
-            result[i] = self.row(i);
+        for (i, slot) in result.iter_mut().enumerate().take(self.row) {
+            *slot = self.row(i);
         }
         result
     }
@@ -650,19 +757,17 @@ impl MatrixTrait for ComplexMatrix {
     /// use peroxide::fuga::*;
     /// use peroxide::complex::matrix::*;
     ///
-    /// fn main() {
-    ///     let a = ml_cmatrix("1.0+1.0i 2.0+2.0i 3.0+3.0i;
-    ///                                4.0+4.0i 5.0+5.0i 6.0+6.0i;
-    ///                                7.0+7.0i 8.0+8.0i 9.0+9.0i");
-    ///     let b = cmatrix(vec![C64::new(5f64, 5f64),
-    ///                                 C64::new(6f64, 6f64),
-    ///                                 C64::new(8f64, 8f64),
-    ///                                 C64::new(9f64, 9f64)],
-    ///                             2, 2, Row
-    ///     );
-    ///     let c = a.submat((1, 1), (2, 2));
-    ///     assert_eq!(b, c);
-    /// }
+    ///  let a = ml_cmatrix("1.0+1.0i 2.0+2.0i 3.0+3.0i;
+    ///                             4.0+4.0i 5.0+5.0i 6.0+6.0i;
+    ///                             7.0+7.0i 8.0+8.0i 9.0+9.0i");
+    ///  let b = cmatrix(vec![C64::new(5f64, 5f64),
+    ///                              C64::new(6f64, 6f64),
+    ///                              C64::new(8f64, 8f64),
+    ///                              C64::new(9f64, 9f64)],
+    ///                          2, 2, Row
+    ///  );
+    ///  let c = a.submat((1, 1), (2, 2));
+    ///  assert_eq!(b, c);
     /// ```
     fn submat(&self, start: (usize, usize), end: (usize, usize)) -> ComplexMatrix {
         let row = end.0 - start.0 + 1;
@@ -697,21 +802,19 @@ impl MatrixTrait for ComplexMatrix {
     /// use peroxide::fuga::*;
     /// use peroxide::complex::matrix::*;
     ///
-    /// fn main() {
-    ///     let mut a = ml_cmatrix("1.0+1.0i 2.0+2.0i 3.0+3.0i;
-    ///                                4.0+4.0i 5.0+5.0i 6.0+6.0i;
-    ///                                7.0+7.0i 8.0+8.0i 9.0+9.0i");
-    ///     let b = cmatrix(vec![C64::new(1f64, 1f64),
-    ///                                 C64::new(2f64, 2f64),
-    ///                                 C64::new(3f64, 3f64),
-    ///                                 C64::new(4f64, 4f64)],
-    ///                             2, 2, Row);
-    ///     let c = ml_cmatrix("1.0+1.0i 2.0+2.0i 3.0+3.0i;
-    ///                                4.0+4.0i 1.0+1.0i 2.0+2.0i;
-    ///                                7.0+7.0i 3.0+3.0i 4.0+4.0i");
-    ///     a.subs_mat((1,1), (2,2), &b);
-    ///     assert_eq!(a, c);       
-    /// }
+    ///  let mut a = ml_cmatrix("1.0+1.0i 2.0+2.0i 3.0+3.0i;
+    ///                             4.0+4.0i 5.0+5.0i 6.0+6.0i;
+    ///                             7.0+7.0i 8.0+8.0i 9.0+9.0i");
+    ///  let b = cmatrix(vec![C64::new(1f64, 1f64),
+    ///                              C64::new(2f64, 2f64),
+    ///                              C64::new(3f64, 3f64),
+    ///                              C64::new(4f64, 4f64)],
+    ///                          2, 2, Row);
+    ///  let c = ml_cmatrix("1.0+1.0i 2.0+2.0i 3.0+3.0i;
+    ///                             4.0+4.0i 1.0+1.0i 2.0+2.0i;
+    ///                             7.0+7.0i 3.0+3.0i 4.0+4.0i");
+    ///  a.subs_mat((1,1), (2,2), &b);
+    ///  assert_eq!(a, c);       
     /// ```
     fn subs_mat(&mut self, start: (usize, usize), end: (usize, usize), m: &ComplexMatrix) {
         let row = end.0 - start.0 + 1;
@@ -721,6 +824,10 @@ impl MatrixTrait for ComplexMatrix {
                 self[(start.0 + i, start.1 + j)] = m[(i, j)];
             }
         }
+    }
+
+    fn shape(&self) -> (usize, usize) {
+        (self.row, self.col)
     }
 }
 
@@ -841,7 +948,7 @@ impl InnerProduct for ComplexMatrix {
     }
 }
 
-/// TODO: Transpose
+// TODO: Transpose
 
 /// Matrix as Linear operator for Vector
 #[allow(non_snake_case)]
@@ -946,32 +1053,32 @@ impl MatrixProduct for ComplexMatrix {
 // Common Properties of Matrix & Vec<f64>
 // =============================================================================
 /// `Complex Matrix` to `Vec<C64>`
-impl Into<Vec<C64>> for ComplexMatrix {
-    fn into(self) -> Vec<C64> {
-        self.data
+impl From<ComplexMatrix> for Vec<C64> {
+    fn from(val: ComplexMatrix) -> Self {
+        val.data
     }
 }
 
 /// `&ComplexMatrix` to `&Vec<C64>`
-impl<'a> Into<&'a Vec<C64>> for &'a ComplexMatrix {
-    fn into(self) -> &'a Vec<C64> {
-        &self.data
+impl<'a> From<&'a ComplexMatrix> for &'a Vec<C64> {
+    fn from(val: &'a ComplexMatrix) -> Self {
+        &val.data
     }
 }
 
 /// `Vec<C64>` to `ComplexMatrix`
-impl Into<ComplexMatrix> for Vec<C64> {
-    fn into(self) -> ComplexMatrix {
-        let l = self.len();
-        cmatrix(self, l, 1, Shape::Col)
+impl From<Vec<C64>> for ComplexMatrix {
+    fn from(val: Vec<C64>) -> Self {
+        let l = val.len();
+        cmatrix(val, l, 1, Shape::Col)
     }
 }
 
 /// `&Vec<C64>` to `ComplexMatrix`
-impl Into<ComplexMatrix> for &Vec<C64> {
-    fn into(self) -> ComplexMatrix {
-        let l = self.len();
-        cmatrix(self.clone(), l, 1, Shape::Col)
+impl From<&Vec<C64>> for ComplexMatrix {
+    fn from(val: &Vec<C64>) -> Self {
+        let l = val.len();
+        cmatrix(val.clone(), l, 1, Shape::Col)
     }
 }
 
@@ -1001,7 +1108,7 @@ impl Add<ComplexMatrix> for ComplexMatrix {
     }
 }
 
-impl<'a, 'b> Add<&'b ComplexMatrix> for &'a ComplexMatrix {
+impl<'b> Add<&'b ComplexMatrix> for &ComplexMatrix {
     type Output = ComplexMatrix;
 
     fn add(self, rhs: &'b ComplexMatrix) -> Self::Output {
@@ -1018,13 +1125,11 @@ impl<'a, 'b> Add<&'b ComplexMatrix> for &'a ComplexMatrix {
 /// use peroxide::fuga::*;
 /// use peroxide::complex::matrix::*;
 ///
-/// fn main() {
-///     let mut a = ml_cmatrix("1.0+1.0i 2.0+2.0i;
-///                                    4.0+4.0i 5.0+5.0i");
-///     let a_exp = ml_cmatrix("2.0+2.0i 3.0+3.0i;
-///                                    5.0+5.0i 6.0+6.0i");
-///     assert_eq!(a + C64::new(1_f64, 1_f64), a_exp);
-/// }
+///  let mut a = ml_cmatrix("1.0+1.0i 2.0+2.0i;
+///                                 4.0+4.0i 5.0+5.0i");
+///  let a_exp = ml_cmatrix("2.0+2.0i 3.0+3.0i;
+///                                 5.0+5.0i 6.0+6.0i");
+///  assert_eq!(a + C64::new(1_f64, 1_f64), a_exp);
 /// ```
 impl<T> Add<T> for ComplexMatrix
 where
@@ -1037,7 +1142,7 @@ where
 }
 
 /// Element-wise addition between &ComplexMatrix & C64
-impl<'a, T> Add<T> for &'a ComplexMatrix
+impl<T> Add<T> for &ComplexMatrix
 where
     T: Into<C64> + Copy,
 {
@@ -1058,13 +1163,11 @@ where
 /// use peroxide::fuga::*;
 /// use peroxide::complex::matrix::*;
 ///
-/// fn main() {
-///     let mut a = ml_cmatrix("1.0+1.0i 2.0+2.0i;
-///                                    4.0+4.0i 5.0+5.0i");
-///     let a_exp = ml_cmatrix("2.0+2.0i 3.0+3.0i;
-///                                    5.0+5.0i 6.0+6.0i");
-///     assert_eq!(C64::new(1_f64, 1_f64) + a, a_exp);
-/// }
+///  let mut a = ml_cmatrix("1.0+1.0i 2.0+2.0i;
+///                                 4.0+4.0i 5.0+5.0i");
+///  let a_exp = ml_cmatrix("2.0+2.0i 3.0+3.0i;
+///                                 5.0+5.0i 6.0+6.0i");
+///  assert_eq!(C64::new(1_f64, 1_f64) + a, a_exp);
 /// ```
 impl Add<ComplexMatrix> for C64 {
     type Output = ComplexMatrix;
@@ -1120,7 +1223,7 @@ impl Neg for ComplexMatrix {
 }
 
 /// Negation of &'a Complex Matrix
-impl<'a> Neg for &'a ComplexMatrix {
+impl Neg for &ComplexMatrix {
     type Output = ComplexMatrix;
 
     fn neg(self) -> Self::Output {
@@ -1149,15 +1252,13 @@ impl<'a> Neg for &'a ComplexMatrix {
 /// use peroxide::fuga::*;
 /// use peroxide::complex::matrix::*;
 ///
-/// fn main() {
-///     let a = ml_cmatrix("10.0+10.0i 20.0+20.0i;
-///                                40.0+40.0i 50.0+50.0i");
-///     let b = ml_cmatrix("1.0+1.0i 2.0+2.0i;
-///                                4.0+4.0i 5.0+5.0i");
-///     let diff = ml_cmatrix("9.0+9.0i 18.0+18.0i;
-///                                   36.0+36.0i 45.0+45.0i");
-///     assert_eq!(a-b, diff);
-/// }
+///  let a = ml_cmatrix("10.0+10.0i 20.0+20.0i;
+///                             40.0+40.0i 50.0+50.0i");
+///  let b = ml_cmatrix("1.0+1.0i 2.0+2.0i;
+///                             4.0+4.0i 5.0+5.0i");
+///  let diff = ml_cmatrix("9.0+9.0i 18.0+18.0i;
+///                                36.0+36.0i 45.0+45.0i");
+///  assert_eq!(a-b, diff);
 /// ```
 impl Sub<ComplexMatrix> for ComplexMatrix {
     type Output = Self;
@@ -1175,7 +1276,7 @@ impl Sub<ComplexMatrix> for ComplexMatrix {
     }
 }
 
-impl<'a, 'b> Sub<&'b ComplexMatrix> for &'a ComplexMatrix {
+impl<'b> Sub<&'b ComplexMatrix> for &ComplexMatrix {
     type Output = ComplexMatrix;
 
     fn sub(self, rhs: &'b ComplexMatrix) -> Self::Output {
@@ -1196,7 +1297,7 @@ where
 }
 
 /// Subtraction between &Complex Matrix & C64
-impl<'a, T> Sub<T> for &'a ComplexMatrix
+impl<T> Sub<T> for &ComplexMatrix
 where
     T: Into<C64> + Copy,
 {
@@ -1216,13 +1317,11 @@ where
 /// use peroxide::fuga::*;
 /// use peroxide::complex::matrix::*;
 ///
-/// fn main() {
-///     let mut a = ml_cmatrix("1.0+1.0i 2.0+2.0i;
-///                                    4.0+4.0i 5.0+5.0i");
-///     let a_exp = ml_cmatrix("0.0+0.0i 1.0+1.0i;
-///                                    3.0+3.0i 4.0+4.0i");
-///     assert_eq!(a - C64::new(1_f64, 1_f64), a_exp);
-/// }
+///  let mut a = ml_cmatrix("1.0+1.0i 2.0+2.0i;
+///                                 4.0+4.0i 5.0+5.0i");
+///  let a_exp = ml_cmatrix("0.0+0.0i 1.0+1.0i;
+///                                 3.0+3.0i 4.0+4.0i");
+///  assert_eq!(a - C64::new(1_f64, 1_f64), a_exp);
 /// ```
 impl Sub<ComplexMatrix> for C64 {
     type Output = ComplexMatrix;
@@ -1277,15 +1376,13 @@ impl<'a> Mul<&'a ComplexMatrix> for C64 {
 /// use peroxide::fuga::*;
 /// use peroxide::complex::matrix::*;
 ///
-/// fn main() {
-///     let mut a = ml_cmatrix("1.0+1.0i 2.0+2.0i;
-///                                    4.0+4.0i 5.0+5.0i");
-///     let mut b = ml_cmatrix("2.0+2.0i 2.0+2.0i;
-///                                    5.0+5.0i 5.0+5.0i");
-///     let prod = ml_cmatrix("0.0+24.0i 0.0+24.0i;
-///                                    0.0+66.0i 0.0+66.0i");
-///     assert_eq!(a * b, prod);
-/// }
+///  let mut a = ml_cmatrix("1.0+1.0i 2.0+2.0i;
+///                                 4.0+4.0i 5.0+5.0i");
+///  let mut b = ml_cmatrix("2.0+2.0i 2.0+2.0i;
+///                                 5.0+5.0i 5.0+5.0i");
+///  let prod = ml_cmatrix("0.0+24.0i 0.0+24.0i;
+///                                 0.0+66.0i 0.0+66.0i");
+///  assert_eq!(a * b, prod);
 /// ```
 impl Mul<ComplexMatrix> for ComplexMatrix {
     type Output = Self;
@@ -1295,7 +1392,7 @@ impl Mul<ComplexMatrix> for ComplexMatrix {
     }
 }
 
-impl<'a, 'b> Mul<&'b ComplexMatrix> for &'a ComplexMatrix {
+impl<'b> Mul<&'b ComplexMatrix> for &ComplexMatrix {
     type Output = ComplexMatrix;
 
     fn mul(self, other: &'b ComplexMatrix) -> Self::Output {
@@ -1313,7 +1410,7 @@ impl Mul<Vec<C64>> for ComplexMatrix {
 }
 
 #[allow(non_snake_case)]
-impl<'a, 'b> Mul<&'b Vec<C64>> for &'a ComplexMatrix {
+impl<'b> Mul<&'b Vec<C64>> for &ComplexMatrix {
     type Output = Vec<C64>;
 
     fn mul(self, other: &'b Vec<C64>) -> Self::Output {
@@ -1333,7 +1430,7 @@ impl Mul<ComplexMatrix> for Vec<C64> {
     }
 }
 
-impl<'a, 'b> Mul<&'b ComplexMatrix> for &'a Vec<C64> {
+impl<'b> Mul<&'b ComplexMatrix> for &Vec<C64> {
     type Output = Vec<C64>;
 
     fn mul(self, other: &'b ComplexMatrix) -> Self::Output {
@@ -1356,7 +1453,7 @@ impl Div<C64> for ComplexMatrix {
     }
 }
 
-impl<'a> Div<C64> for &'a ComplexMatrix {
+impl Div<C64> for &ComplexMatrix {
     type Output = ComplexMatrix;
 
     fn div(self, other: C64) -> Self::Output {
@@ -1527,24 +1624,22 @@ impl FPMatrix for ComplexMatrix {
     /// use peroxide::complex::matrix::*;
     /// use peroxide::traits::fp::FPMatrix;
     ///
-    /// fn main() {
-    ///     let x = cmatrix(vec![C64::new(1f64, 1f64),
-    ///                                 C64::new(2f64, 2f64),
-    ///                                 C64::new(3f64, 3f64),
-    ///                                 C64::new(4f64, 4f64)],
-    ///                             2, 2, Row
-    ///     );
-    ///     let y = x.col_map(|r| r.fmap(|t| t + r[0]));
+    ///  let x = cmatrix(vec![C64::new(1f64, 1f64),
+    ///                              C64::new(2f64, 2f64),
+    ///                              C64::new(3f64, 3f64),
+    ///                              C64::new(4f64, 4f64)],
+    ///                          2, 2, Row
+    ///  );
+    ///  let y = x.col_map(|r| r.fmap(|t| t + r[0]));
     ///
-    ///     let y_col_map = cmatrix(vec![C64::new(2f64, 2f64),
-    ///                                         C64::new(4f64, 4f64),
-    ///                                         C64::new(4f64, 4f64),
-    ///                                         C64::new(6f64, 6f64)],
-    ///                             2, 2, Col
-    ///     );
+    ///  let y_col_map = cmatrix(vec![C64::new(2f64, 2f64),
+    ///                                      C64::new(4f64, 4f64),
+    ///                                      C64::new(4f64, 4f64),
+    ///                                      C64::new(6f64, 6f64)],
+    ///                          2, 2, Col
+    ///  );
     ///
-    ///     assert_eq!(y, y_col_map);
-    /// }
+    ///  assert_eq!(y, y_col_map);
     /// ```
     fn col_map<F>(&self, f: F) -> ComplexMatrix
     where
@@ -1572,24 +1667,22 @@ impl FPMatrix for ComplexMatrix {
     /// use peroxide::complex::matrix::*;
     /// use peroxide::traits::fp::FPMatrix;
     ///
-    /// fn main() {
-    ///     let x = cmatrix(vec![C64::new(1f64, 1f64),
-    ///                                 C64::new(2f64, 2f64),
-    ///                                 C64::new(3f64, 3f64),
-    ///                                 C64::new(4f64, 4f64)],
-    ///                             2, 2, Row
-    ///     );
-    ///     let y = x.row_map(|r| r.fmap(|t| t + r[0]));
+    ///  let x = cmatrix(vec![C64::new(1f64, 1f64),
+    ///                              C64::new(2f64, 2f64),
+    ///                              C64::new(3f64, 3f64),
+    ///                              C64::new(4f64, 4f64)],
+    ///                          2, 2, Row
+    ///  );
+    ///  let y = x.row_map(|r| r.fmap(|t| t + r[0]));
     ///
-    ///     let y_row_map = cmatrix(vec![C64::new(2f64, 2f64),
-    ///                                         C64::new(3f64, 3f64),
-    ///                                         C64::new(6f64, 6f64),
-    ///                                         C64::new(7f64, 7f64)],
-    ///                             2, 2, Row
-    ///     );
+    ///  let y_row_map = cmatrix(vec![C64::new(2f64, 2f64),
+    ///                                      C64::new(3f64, 3f64),
+    ///                                      C64::new(6f64, 6f64),
+    ///                                      C64::new(7f64, 7f64)],
+    ///                          2, 2, Row
+    ///  );
     ///
-    ///     assert_eq!(y, y_row_map);
-    /// }
+    ///  assert_eq!(y, y_row_map);
     /// ```
     fn row_map<F>(&self, f: F) -> ComplexMatrix
     where
@@ -1670,8 +1763,8 @@ impl FPMatrix for ComplexMatrix {
         F: Fn(Vec<C64>) -> C64,
     {
         let mut v = vec![Complex::zero(); self.col];
-        for i in 0..self.col {
-            v[i] = f(self.col(i));
+        for (i, slot) in v.iter_mut().enumerate().take(self.col) {
+            *slot = f(self.col(i));
         }
         v
     }
@@ -1681,8 +1774,8 @@ impl FPMatrix for ComplexMatrix {
         F: Fn(Vec<C64>) -> C64,
     {
         let mut v = vec![Complex::zero(); self.row];
-        for i in 0..self.row {
-            v[i] = f(self.row(i));
+        for (i, slot) in v.iter_mut().enumerate().take(self.row) {
+            *slot = f(self.row(i));
         }
         v
     }
@@ -1826,40 +1919,38 @@ impl LinearAlgebra<ComplexMatrix> for ComplexMatrix {
     /// use peroxide::fuga::*;
     /// use peroxide::complex::matrix::*;
     ///
-    /// fn main() {
-    ///     let a = cmatrix(vec![
-    ///             C64::new(1f64, 1f64),
-    ///             C64::new(2f64, 2f64),
-    ///             C64::new(3f64, 3f64),
-    ///             C64::new(4f64, 4f64)
-    ///         ],
-    ///         2, 2, Row
-    ///     );
+    ///  let a = cmatrix(vec![
+    ///          C64::new(1f64, 1f64),
+    ///          C64::new(2f64, 2f64),
+    ///          C64::new(3f64, 3f64),
+    ///          C64::new(4f64, 4f64)
+    ///      ],
+    ///      2, 2, Row
+    ///  );
     ///
-    ///     let l_exp = cmatrix(vec![
-    ///             C64::new(1f64, 0f64),
-    ///             C64::new(0f64, 0f64),
-    ///             C64::new(0.5f64, -0.0f64),
-    ///             C64::new(1f64, 0f64)
-    ///         ],
-    ///         2, 2, Row
-    ///     );
+    ///  let l_exp = cmatrix(vec![
+    ///          C64::new(1f64, 0f64),
+    ///          C64::new(0f64, 0f64),
+    ///          C64::new(0.5f64, -0.0f64),
+    ///          C64::new(1f64, 0f64)
+    ///      ],
+    ///      2, 2, Row
+    ///  );
     ///
-    ///     let u_exp = cmatrix(vec![
-    ///             C64::new(4f64, 4f64),
-    ///             C64::new(3f64, 3f64),
-    ///             C64::new(0f64, 0f64),
-    ///             C64::new(-0.5f64, -0.5f64)
-    ///         ],
-    ///         2, 2, Row
-    ///     );
-    ///     let pqlu = a.lu();
-    ///     let (p,q,l,u) = (pqlu.p, pqlu.q, pqlu.l, pqlu.u);
-    ///     assert_eq!(p, vec![1]); // swap 0 & 1 (Row)
-    ///     assert_eq!(q, vec![1]); // swap 0 & 1 (Col)
-    ///     assert_eq!(l, l_exp);
-    ///     assert_eq!(u, u_exp);
-    /// }
+    ///  let u_exp = cmatrix(vec![
+    ///          C64::new(4f64, 4f64),
+    ///          C64::new(3f64, 3f64),
+    ///          C64::new(0f64, 0f64),
+    ///          C64::new(-0.5f64, -0.5f64)
+    ///      ],
+    ///      2, 2, Row
+    ///  );
+    ///  let pqlu = a.lu();
+    ///  let (p,q,l,u) = (pqlu.p, pqlu.q, pqlu.l, pqlu.u);
+    ///  assert_eq!(p, vec![1]); // swap 0 & 1 (Row)
+    ///  assert_eq!(q, vec![1]); // swap 0 & 1 (Col)
+    ///  assert_eq!(l, l_exp);
+    ///  assert_eq!(u, u_exp);
     /// ```
     fn lu(&self) -> PQLU<ComplexMatrix> {
         assert_eq!(self.col, self.row);
@@ -1922,17 +2013,15 @@ impl LinearAlgebra<ComplexMatrix> for ComplexMatrix {
     /// use peroxide::fuga::*;
     /// use peroxide::complex::matrix::*;
     ///
-    /// fn main() {
-    ///     let a = cmatrix(vec![
-    ///             C64::new(1f64, 1f64),
-    ///             C64::new(2f64, 2f64),
-    ///             C64::new(3f64, 3f64),
-    ///             C64::new(4f64, 4f64)
-    ///         ],
-    ///         2, 2, Row
-    ///     );
-    ///     assert_eq!(a.det().norm(), 4f64);
-    /// }
+    ///  let a = cmatrix(vec![
+    ///          C64::new(1f64, 1f64),
+    ///          C64::new(2f64, 2f64),
+    ///          C64::new(3f64, 3f64),
+    ///          C64::new(4f64, 4f64)
+    ///      ],
+    ///      2, 2, Row
+    ///  );
+    ///  assert_eq!(a.det().norm(), 4f64);
     /// ```
     fn det(&self) -> C64 {
         assert_eq!(self.row, self.col);
@@ -1948,21 +2037,19 @@ impl LinearAlgebra<ComplexMatrix> for ComplexMatrix {
     /// use peroxide::fuga::*;
     /// use peroxide::complex::matrix::*;
     ///
-    /// fn main() {
-    ///     let a = cmatrix(vec![
-    ///             C64::new(1f64, 1f64),
-    ///             C64::new(2f64, 2f64),
-    ///             C64::new(3f64, 3f64),
-    ///             C64::new(4f64, 4f64)
-    ///         ],
-    ///         2, 2, Row
-    ///     );
-    ///     let (m1, m2, m3, m4) = a.block();
-    ///     assert_eq!(m1, ml_cmatrix("1.0+1.0i"));
-    ///     assert_eq!(m2, ml_cmatrix("2.0+2.0i"));
-    ///     assert_eq!(m3, ml_cmatrix("3.0+3.0i"));
-    ///     assert_eq!(m4, ml_cmatrix("4.0+4.0i"));
-    /// }
+    ///  let a = cmatrix(vec![
+    ///          C64::new(1f64, 1f64),
+    ///          C64::new(2f64, 2f64),
+    ///          C64::new(3f64, 3f64),
+    ///          C64::new(4f64, 4f64)
+    ///      ],
+    ///      2, 2, Row
+    ///  );
+    ///  let (m1, m2, m3, m4) = a.block();
+    ///  assert_eq!(m1, ml_cmatrix("1.0+1.0i"));
+    ///  assert_eq!(m2, ml_cmatrix("2.0+2.0i"));
+    ///  assert_eq!(m3, ml_cmatrix("3.0+3.0i"));
+    ///  assert_eq!(m4, ml_cmatrix("4.0+4.0i"));
     /// ```
     fn block(&self) -> (Self, Self, Self, Self) {
         let r = self.row;
@@ -2013,27 +2100,25 @@ impl LinearAlgebra<ComplexMatrix> for ComplexMatrix {
     /// use peroxide::fuga::*;
     /// use peroxide::complex::matrix::*;
     ///
-    /// fn main() {
-    ///     // Non-singular
-    ///     let a = cmatrix(vec![
-    ///             C64::new(1f64, 1f64),
-    ///             C64::new(2f64, 2f64),
-    ///             C64::new(3f64, 3f64),
-    ///             C64::new(4f64, 4f64)
-    ///         ],
-    ///         2, 2, Row
-    ///     );
+    ///  // Non-singular
+    ///  let a = cmatrix(vec![
+    ///          C64::new(1f64, 1f64),
+    ///          C64::new(2f64, 2f64),
+    ///          C64::new(3f64, 3f64),
+    ///          C64::new(4f64, 4f64)
+    ///      ],
+    ///      2, 2, Row
+    ///  );
     ///
-    ///     let a_inv_exp = cmatrix(vec![
-    ///             C64::new(-1.0f64, 1f64),
-    ///             C64::new(0.5f64, -0.5f64),
-    ///             C64::new(0.75f64, -0.75f64),
-    ///             C64::new(-0.25f64, 0.25f64)
-    ///         ],
-    ///         2, 2, Row
-    ///     );
-    ///     assert_eq!(a.inv(), a_inv_exp);
-    /// }
+    ///  let a_inv_exp = cmatrix(vec![
+    ///          C64::new(-1.0f64, 1f64),
+    ///          C64::new(0.5f64, -0.5f64),
+    ///          C64::new(0.75f64, -0.75f64),
+    ///          C64::new(-0.25f64, 0.25f64)
+    ///      ],
+    ///      2, 2, Row
+    ///  );
+    ///  assert_eq!(a.inv(), a_inv_exp);
     /// ```
     fn inv(&self) -> Self {
         self.lu().inv()
@@ -2055,10 +2140,10 @@ impl LinearAlgebra<ComplexMatrix> for ComplexMatrix {
                 let lu = self.lu();
                 let (p, q, l, u) = lu.extract();
                 let mut v = b.to_vec();
-                v.swap_with_perm(&p.into_iter().enumerate().collect());
+                v.swap_with_perm(&p.into_iter().enumerate().collect::<Vec<_>>());
                 let z = l.forward_subs(&v);
                 let mut y = u.back_subs(&z);
-                y.swap_with_perm(&q.into_iter().enumerate().rev().collect());
+                y.swap_with_perm(&q.into_iter().enumerate().rev().collect::<Vec<_>>());
                 y
             }
             SolveKind::WAZ => {
@@ -2142,8 +2227,8 @@ impl MutMatrix for ComplexMatrix {
             Shape::Row => {
                 let mut v: Vec<*mut C64> = vec![&mut Complex::zero(); self.row];
                 let p = self.mut_ptr();
-                for i in 0..v.len() {
-                    v[i] = p.add(idx + i * self.col);
+                for (i, slot) in v.iter_mut().enumerate() {
+                    *slot = p.add(idx + i * self.col);
                 }
                 v
             }
@@ -2165,8 +2250,8 @@ impl MutMatrix for ComplexMatrix {
             Shape::Col => {
                 let mut v: Vec<*mut C64> = vec![&mut Complex::zero(); self.col];
                 let p = self.mut_ptr();
-                for i in 0..v.len() {
-                    v[i] = p.add(idx + i * self.row);
+                for (i, slot) in v.iter_mut().enumerate() {
+                    *slot = p.add(idx + i * self.row);
                 }
                 v
             }
@@ -2180,7 +2265,7 @@ impl MutMatrix for ComplexMatrix {
         }
     }
 
-    unsafe fn swap_with_perm(&mut self, p: &Vec<(usize, usize)>, shape: Shape) {
+    unsafe fn swap_with_perm(&mut self, p: &[(usize, usize)], shape: Shape) {
         for (i, j) in p.iter() {
             self.swap(*i, *j, shape)
         }
@@ -2296,23 +2381,21 @@ impl TrigOps for ComplexMatrix {
 /// use peroxide::complex::matrix::*;
 /// use peroxide::traits::fp::FPMatrix;
 ///
-/// fn main() {
-///     let x1 = cmatrix(vec![C64::new(1f64, 1f64)], 1, 1, Row);
-///     let x2 = cmatrix(vec![C64::new(2f64, 2f64)], 1, 1, Row);
-///     let x3 = cmatrix(vec![C64::new(3f64, 3f64)], 1, 1, Row);
-///     let x4 = cmatrix(vec![C64::new(4f64, 4f64)], 1, 1, Row);
+///  let x1 = cmatrix(vec![C64::new(1f64, 1f64)], 1, 1, Row);
+///  let x2 = cmatrix(vec![C64::new(2f64, 2f64)], 1, 1, Row);
+///  let x3 = cmatrix(vec![C64::new(3f64, 3f64)], 1, 1, Row);
+///  let x4 = cmatrix(vec![C64::new(4f64, 4f64)], 1, 1, Row);
 ///
-///     let y = complex_combine(x1, x2, x3, x4);
+///  let y = complex_combine(x1, x2, x3, x4);
 ///
-///     let y_exp = cmatrix(vec![C64::new(1f64, 1f64),
-///                                     C64::new(2f64, 2f64),
-///                                     C64::new(3f64, 3f64),
-///                                     C64::new(4f64, 4f64)],
-///                             2, 2, Row
-///     );
+///  let y_exp = cmatrix(vec![C64::new(1f64, 1f64),
+///                                  C64::new(2f64, 2f64),
+///                                  C64::new(3f64, 3f64),
+///                                  C64::new(4f64, 4f64)],
+///                          2, 2, Row
+///  );
 ///
-///     assert_eq!(y, y_exp);
-/// }
+///  assert_eq!(y, y_exp);
 /// ```
 pub fn complex_combine(
     m1: ComplexMatrix,
@@ -2361,17 +2444,15 @@ pub fn complex_combine(
 /// use peroxide::fuga::*;
 /// use peroxide::complex::matrix::*;
 ///
-/// fn main() {
-///     let a = ml_cmatrix("2.0+2.0i 0.0+0.0i;
-///                                2.0+2.0i 1.0+1.0i");
-///     let b = cmatrix(vec![C64::new(2f64, 2f64),
-///                                 C64::new(0f64, 0f64),
-///                                 C64::new(-2f64, -2f64),
-///                                 C64::new(1f64, 1f64)],
-///                             2, 2, Row
-///     );
-///     assert_eq!(complex_inv_l(a), b);
-/// }
+///  let a = ml_cmatrix("2.0+2.0i 0.0+0.0i;
+///                             2.0+2.0i 1.0+1.0i");
+///  let b = cmatrix(vec![C64::new(2f64, 2f64),
+///                              C64::new(0f64, 0f64),
+///                              C64::new(-2f64, -2f64),
+///                              C64::new(1f64, 1f64)],
+///                          2, 2, Row
+///  );
+///  assert_eq!(complex_inv_l(a), b);
 /// ```
 pub fn complex_inv_l(l: ComplexMatrix) -> ComplexMatrix {
     let mut m = l.clone();
@@ -2404,17 +2485,15 @@ pub fn complex_inv_l(l: ComplexMatrix) -> ComplexMatrix {
 /// use peroxide::fuga::*;
 /// use peroxide::complex::matrix::*;
 ///
-/// fn main() {
-///     let a = ml_cmatrix("2.0+2.0i 2.0+2.0i;
-///                                0.0+0.0i 1.0+1.0i");
-///     let b = cmatrix(vec![C64::new(0.25f64, -0.25f64),
-///                                 C64::new(-0.5f64, 0.5f64),
-///                                 C64::new(0.0f64, 0.0f64),
-///                                 C64::new(0.5f64, -0.5f64)],
-///                             2, 2, Row
-///     );
-///     assert_eq!(complex_inv_u(a), b);
-/// }
+///  let a = ml_cmatrix("2.0+2.0i 2.0+2.0i;
+///                             0.0+0.0i 1.0+1.0i");
+///  let b = cmatrix(vec![C64::new(0.25f64, -0.25f64),
+///                              C64::new(-0.5f64, 0.5f64),
+///                              C64::new(0.0f64, 0.0f64),
+///                              C64::new(0.5f64, -0.5f64)],
+///                          2, 2, Row
+///  );
+///  assert_eq!(complex_inv_u(a), b);
 /// ```
 pub fn complex_inv_u(u: ComplexMatrix) -> ComplexMatrix {
     let mut w = u.clone();
@@ -2465,19 +2544,17 @@ pub fn cmatmul(a: &ComplexMatrix, b: &ComplexMatrix) -> ComplexMatrix {
 ///
 /// use peroxide::complex::matrix::*;
 ///
-/// fn main() {
-///     let a = ml_cmatrix("1.0+1.0i 2.0+2.0i;
-///                                0.0+0.0i 1.0+1.0i");
-///     let b = ml_cmatrix("1.0+1.0i 0.0+0.0i;
-///                                2.0+2.0i 1.0+1.0i");
-///     let mut c1 = ml_cmatrix("1.0+1.0i 1.0+1.0i;
-///                                    1.0+1.0i 1.0+1.0i");
-///     let mul_val = ml_cmatrix("-10.0+10.0i -4.0+4.0i;
-///                                      -4.0+4.0i -2.0+2.0i");
+///  let a = ml_cmatrix("1.0+1.0i 2.0+2.0i;
+///                             0.0+0.0i 1.0+1.0i");
+///  let b = ml_cmatrix("1.0+1.0i 0.0+0.0i;
+///                             2.0+2.0i 1.0+1.0i");
+///  let mut c1 = ml_cmatrix("1.0+1.0i 1.0+1.0i;
+///                                 1.0+1.0i 1.0+1.0i");
+///  let mul_val = ml_cmatrix("-10.0+10.0i -4.0+4.0i;
+///                                   -4.0+4.0i -2.0+2.0i");
 ///
-///     cgemm(C64::new(1.0, 1.0), &a, &b, C64::new(0.0, 0.0), &mut c1);
-///     assert_eq!(c1, mul_val);
-/// }
+///  cgemm(C64::new(1.0, 1.0), &a, &b, C64::new(0.0, 0.0), &mut c1);
+///  assert_eq!(c1, mul_val);
 pub fn cgemm(alpha: C64, a: &ComplexMatrix, b: &ComplexMatrix, beta: C64, c: &mut ComplexMatrix) {
     let m = a.row;
     let k = a.col;
@@ -2519,7 +2596,7 @@ pub fn cgemm(alpha: C64, a: &ComplexMatrix, b: &ComplexMatrix, beta: C64, c: &mu
 }
 
 /// General Matrix-Vector multiplication
-pub fn cgemv(alpha: C64, a: &ComplexMatrix, b: &Vec<C64>, beta: C64, c: &mut Vec<C64>) {
+pub fn cgemv(alpha: C64, a: &ComplexMatrix, b: &[C64], beta: C64, c: &mut [C64]) {
     let m = a.row;
     let k = a.col;
     let n = 1usize;
@@ -2554,7 +2631,7 @@ pub fn cgemv(alpha: C64, a: &ComplexMatrix, b: &Vec<C64>, beta: C64, c: &mut Vec
 }
 
 /// General Vector-Matrix multiplication
-pub fn complex_gevm(alpha: C64, a: &Vec<C64>, b: &ComplexMatrix, beta: C64, c: &mut Vec<C64>) {
+pub fn complex_gevm(alpha: C64, a: &[C64], b: &ComplexMatrix, beta: C64, c: &mut [C64]) {
     let m = 1usize;
     let k = a.len();
     let n = b.col;

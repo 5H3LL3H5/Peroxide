@@ -329,11 +329,11 @@ use arrow::datatypes::{
     Float32Type, Float64Type, Int16Type, Int32Type, Int64Type, Int8Type, UInt16Type, UInt32Type,
     UInt64Type, UInt8Type,
 };
+#[cfg(feature = "parquet")]
+use indexmap::IndexMap;
 use std::cmp::{max, min};
 #[cfg(feature = "csv")]
 use std::collections::HashMap;
-#[cfg(feature = "parquet")]
-use indexmap::IndexMap;
 #[cfg(any(feature = "csv", feature = "nc", feature = "parquet"))]
 use std::error::Error;
 use std::fmt;
@@ -1101,25 +1101,11 @@ where
 impl DType {
     /// Check for static numeric type
     pub fn is_numeric(&self) -> bool {
-        match self {
-            Bool => false,
-            Str => false,
-            Char => false,
-            USIZE => false,
-            ISIZE => false,
-            _ => true,
-        }
+        !matches!(self, Bool | Str | Char | USIZE | ISIZE)
     }
 
     pub fn is_integer(&self) -> bool {
-        match self {
-            Bool => false,
-            Str => false,
-            Char => false,
-            F32 => false,
-            F64 => false,
-            _ => true,
-        }
+        !matches!(self, Bool | Str | Char | F32 | F64)
     }
 }
 
@@ -1179,6 +1165,11 @@ impl Scalar {
         dtype_match!(self.dtype, vec![self.unwrap()], Series::new; Vec)
     }
 
+    // The inherent `to_string` returns the raw value (no dtype annotation),
+    // while `Display::to_string` adds `, dtype:...`. Clippy flags the name
+    // collision; renaming would be a public API break, so silence the lint
+    // for now and revisit when bumping the major version.
+    #[allow(clippy::inherent_to_string_shadow_display)]
     pub fn to_string(self) -> String {
         dtype_match!(self.dtype, self.unwrap(), to_string)
     }
@@ -1207,6 +1198,11 @@ impl Series {
     /// Length for Series
     pub fn len(&self) -> usize {
         dtype_match!(self.dtype, self.as_slice().to_vec(), len; Vec)
+    }
+
+    /// True if the Series has no elements.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Explicit type casting for Series
@@ -1311,7 +1307,10 @@ impl Series {
     pub fn var(&self) -> anyhow::Result<f64> {
         use crate::statistics::stat::Statistics;
         let v = self.to_f64_vec()?;
-        anyhow::ensure!(v.len() > 1, "Cannot compute variance of Series with fewer than 2 elements");
+        anyhow::ensure!(
+            v.len() > 1,
+            "Cannot compute variance of Series with fewer than 2 elements"
+        );
         Ok(v.var())
     }
 
@@ -1319,18 +1318,28 @@ impl Series {
     pub fn sd(&self) -> anyhow::Result<f64> {
         use crate::statistics::stat::Statistics;
         let v = self.to_f64_vec()?;
-        anyhow::ensure!(v.len() > 1, "Cannot compute sd of Series with fewer than 2 elements");
+        anyhow::ensure!(
+            v.len() > 1,
+            "Cannot compute sd of Series with fewer than 2 elements"
+        );
         Ok(v.sd())
     }
 
     /// Minimum value, preserving original type
     pub fn min(&self) -> anyhow::Result<Scalar> {
-        anyhow::ensure!(self.len() > 0, "Cannot compute min of empty Series");
+        anyhow::ensure!(!self.is_empty(), "Cannot compute min of empty Series");
 
         macro_rules! typed_min {
             ($v:expr, $dtype:ident) => {{
-                let min_val = $v.iter().cloned().reduce(|a, b| if a <= b { a } else { b }).unwrap();
-                Ok(Scalar { value: DTypeValue::$dtype(min_val), dtype: DType::$dtype })
+                let min_val = $v
+                    .iter()
+                    .cloned()
+                    .reduce(|a, b| if a <= b { a } else { b })
+                    .unwrap();
+                Ok(Scalar {
+                    value: DTypeValue::$dtype(min_val),
+                    dtype: DType::$dtype,
+                })
             }};
         }
 
@@ -1355,12 +1364,19 @@ impl Series {
 
     /// Maximum value, preserving original type
     pub fn max(&self) -> anyhow::Result<Scalar> {
-        anyhow::ensure!(self.len() > 0, "Cannot compute max of empty Series");
+        anyhow::ensure!(!self.is_empty(), "Cannot compute max of empty Series");
 
         macro_rules! typed_max {
             ($v:expr, $dtype:ident) => {{
-                let max_val = $v.iter().cloned().reduce(|a, b| if a >= b { a } else { b }).unwrap();
-                Ok(Scalar { value: DTypeValue::$dtype(max_val), dtype: DType::$dtype })
+                let max_val = $v
+                    .iter()
+                    .cloned()
+                    .reduce(|a, b| if a >= b { a } else { b })
+                    .unwrap();
+                Ok(Scalar {
+                    value: DTypeValue::$dtype(max_val),
+                    dtype: DType::$dtype,
+                })
             }};
         }
 
@@ -1994,9 +2010,17 @@ impl DataFrame {
     pub fn describe(&self) -> DataFrame {
         use crate::statistics::stat::Statistics;
 
-        let stat_labels = vec!["count", "mean", "sd", "min", "max"];
+        let stat_labels = ["count", "mean", "sd", "min", "max"];
         let mut result = DataFrame::new(vec![]);
-        result.push("stat", Series::new(stat_labels.iter().map(|s| s.to_string()).collect::<Vec<String>>()));
+        result.push(
+            "stat",
+            Series::new(
+                stat_labels
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<String>>(),
+            ),
+        );
 
         for (i, series) in self.data.iter().enumerate() {
             if let Ok(v) = series.to_f64_vec() {
@@ -2128,17 +2152,17 @@ impl WithCSV for DataFrame {
             .from_path(file_path)?;
 
         let headers_vec = rdr.headers()?;
-        let headers = headers_vec.iter().map(|x| x).collect::<Vec<&str>>();
+        let headers = headers_vec.iter().collect::<Vec<&str>>();
         let mut result = DataFrame::new(vec![]);
         for h in headers.iter() {
-            result.push(*h, Series::new(Vec::<String>::new()));
+            result.push(h, Series::new(Vec::<String>::new()));
         }
 
         for rec in rdr.deserialize() {
             let record: HashMap<String, String> = rec?;
             for head in record.keys() {
                 let value = &record[head];
-                if value.len() > 0 {
+                if !value.is_empty() {
                     result[head.as_str()].push(value.to_string());
                 }
             }

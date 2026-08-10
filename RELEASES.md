@@ -1,3 +1,126 @@
+# Release 0.43.1 (2026-08-02)
+
+## Bug fixes
+
+- Improve numerical stability and domain coverage of `gamma_approx` and `ln_gamma_approx` ([#105](https://github.com/Axect/Peroxide/pull/105)) (Thanks to [@jzeuzs](https://github.com/jzeuzs))
+  - `ln_gamma_approx` now applies Euler's reflection formula for `z < 0.5`, which previously only `gamma_approx` did.
+  - Poles are handled explicitly: `gamma_approx` returns `NaN` at negative integers and `ln_gamma_approx` returns `+inf` at non-positive integers.
+  - The positive-integer fast path accumulates in `f64` instead of the integer `factorial` helper, and saturates to `+inf` above `z = 171`.
+  - Adds 171 lines of tests covering poles, reflection, integer arguments and large-magnitude inputs.
+- Make `ln_gamma` exact at small integers and `gamma(-0.0)` negative infinity ([#113](https://github.com/Axect/Peroxide/pull/113))
+  - Integer arguments up to 23 route through the exact factorial path, so `ln_gamma_approx(1.0)` and `ln_gamma_approx(2.0)` return exactly `0` instead of about `-1e-11`. This matters for callers that subtract two log-gammas of equal argument.
+  - `gamma_approx(-0.0)` returns `-inf` while `gamma_approx(0.0)` returns `+inf`, matching C99 `tgamma` and SciPy.
+
+## JOSS review (#10366) cycle
+
+### Metadata
+- Add Russell R P Senthamarai to `CITATION.cff` and the manuscript author list. The manuscript and `CITATION.cff` now list the same eight named authors in the same order with matching ORCIDs.
+- Use a single SPDX identifier for the `CITATION.cff` `license` field. `MIT OR Apache-2.0` is an SPDX expression, which the Citation File Format 1.2.0 schema does not accept. Zenodo validates the file with cffconvert during GitHub release archiving, so the v0.42.0 and v0.43.0 archives failed and never received a DOI. The array form is valid per the CFF spec but Zenodo has rejected it since the InvenioRDM migration ([zenodo/zenodo#2515](https://github.com/zenodo/zenodo/issues/2515)). The crate stays dual-licensed under MIT or Apache-2.0 through `Cargo.toml` and the two `LICENSE-*` files.
+
+### Documentation
+- Apply editorial wording fixes to the manuscript ([#114](https://github.com/Axect/Peroxide/pull/114)) (Thanks to [@jbytecode](https://github.com/jbytecode))
+
+# Release 0.43.0 (2026-07-11)
+
+## Breaking changes
+
+- Make the `rand` / `rand_distr` sampling stack optional behind the default-on `rand` feature ([#88](https://github.com/Axect/Peroxide/issues/88), [#104](https://github.com/Axect/Peroxide/pull/104))
+  - Existing default-feature users are unchanged.
+  - `default-features = false` now provides a deterministic core without RNG dependencies; sampling APIs require the `rand` feature.
+  - This is a breaking change for users who already disabled default features and relied on sampling APIs.
+
+## New features
+
+- Add the `Dirichlet(α)` probability distribution ([#95](https://github.com/Axect/Peroxide/pull/95))
+- Add `O3-openblas-system` for linking a system-installed OpenBLAS through `pkg-config` ([#98](https://github.com/Axect/Peroxide/issues/98), [#107](https://github.com/Axect/Peroxide/pull/107))
+
+## Documentation
+
+- Clarify BLAS/LAPACK backend selection, OpenBLAS source versus system builds, TLS prerequisites, and HDF5 constraints ([#98](https://github.com/Axect/Peroxide/issues/98))
+- Remove the stale `Peroxide_BLAS` setup link from the main README; the archived repository is retained for historical reference
+- Replace the hand-maintained source-layout table with module-level docs.rs pointers and improve module descriptions ([#99](https://github.com/Axect/Peroxide/issues/99), [#108](https://github.com/Axect/Peroxide/pull/108))
+
+## CI / Lint
+
+- Add cargo-hack coverage for individual features and pairwise pure-Rust feature combinations ([#98](https://github.com/Axect/Peroxide/issues/98))
+- Add dedicated CI coverage for system/source OpenBLAS, no-rand `wasm32`, plotting, formatting, and clippy
+
+# Release 0.42.0 (2026-07-06)
+
+## Breaking changes
+
+- Encapsulate `Matrix` / `ComplexMatrix` fields to fix a soundness hole ([#101](https://github.com/Axect/Peroxide/issues/101), [2874984](https://github.com/Axect/Peroxide/commit/2874984))
+  - Safe code could set `row` / `col` / `data` directly and reach heap out-of-bounds reads and writes through the internal raw-pointer and BLAS paths
+  - Fields are now private and the `matrix()` / `cmatrix()` constructors assert `data.len() == row * col`
+  - Migration guide:
+    - `m.row` -> `m.nrow()`
+    - `m.col` -> `m.ncol()`
+    - `m.shape` -> `m.layout()`
+    - `m.data` -> `m.as_slice()` / `m.as_mut_slice()` / `m.into_vec()`
+    - `Matrix { data, row, col, shape }` literal -> `matrix(data, row, col, shape)`
+  - Known follow-up: `serde` / `rkyv` deserialization can still bypass the constructor validation; tracked separately
+
+## Bug fixes
+
+- Fix even-order adaptive Gauss-Kronrod rules (`G10K21` / `G20K41` / `G30K61` and their `R` variants) never early-exiting ([#93](https://github.com/Axect/Peroxide/issues/93), [febd4e2](https://github.com/Axect/Peroxide/commit/febd4e2))
+  - The Gauss-sum reconstruction assumed the odd-order node layout, so even-order rules produced a corrupted error estimate and always subdivided to `max_iter`, even for constant integrands
+  - Integrating a cubic over `[0, 1]` with `G10K21(1e-8, 20)` drops from about 87 ms to about 70 ns
+
+## New features
+
+- `MatrixTrait::shape()` returning `(usize, usize)` ([#86](https://github.com/Axect/Peroxide/issues/86), [#103](https://github.com/Axect/Peroxide/pull/103) by [@ferxades12](https://github.com/ferxades12))
+- `Matrix::trace()` and `ComplexMatrix::trace()` ([#87](https://github.com/Axect/Peroxide/issues/87), [523185d](https://github.com/Axect/Peroxide/commit/523185d))
+- `ComplexMatrix::h()`: Hermitian conjugate (conjugate transpose) ([#87](https://github.com/Axect/Peroxide/issues/87))
+- `ComplexMatrix::real()` / `imag()`: extract the real or imaginary part as a real `Matrix` ([#87](https://github.com/Axect/Peroxide/issues/87))
+- New accessors on both matrix types: `nrow()`, `ncol()`, `layout()`, `into_vec()` ([#101](https://github.com/Axect/Peroxide/issues/101))
+
+## CI / Lint
+
+- Add cargo-hack feature-combinations job: every feature builds alone, plus the pairwise powerset of the pure-Rust features ([#98](https://github.com/Axect/Peroxide/issues/98), [fcfd012](https://github.com/Axect/Peroxide/commit/fcfd012))
+- Add a blocking `cargo fmt --all --check` job and format the files added after [#96](https://github.com/Axect/Peroxide/pull/96) ([bd36784](https://github.com/Axect/Peroxide/commit/bd36784), [ec37e61](https://github.com/Axect/Peroxide/commit/ec37e61))
+
+## Documentation
+
+- Promote the Quickstart to the top of `README.md`, condense the feature inventory, and trim the `CONTRIBUTING.md` source layout to a directory-level table ([#99](https://github.com/Axect/Peroxide/issues/99), [72a9e56](https://github.com/Axect/Peroxide/commit/72a9e56))
+- Document that `O3-accelerate` only builds on Apple targets, with cargo-hack exclusion guidance ([#98](https://github.com/Axect/Peroxide/issues/98), [6d99f2f](https://github.com/Axect/Peroxide/commit/6d99f2f))
+
+# Release 0.41.2 (2026-05-16)
+
+## Packaging
+
+- Exclude `paper/` from the published crate
+  - JOSS paper sources (`paper.md`, `paper.bib`) live in the git repository for transparency but are not consumed by downstream users of the library and only inflate the `.crate` file uploaded to crates.io
+  - No API or source change
+
+# Release 0.41.1 (2026-05-16)
+
+## JOSS review (#10366) cycle
+
+### Bug fix
+- Allocate `row_ics` with the correct `nnz` length in `SPMatrix::new` ([9723fde](https://github.com/Axect/Peroxide/commit/9723fde))
+
+### Build
+- Add `O3-openblas` / `O3-netlib` / `O3-accelerate` / `O3-intel-mkl` convenience features that select the BLAS/LAPACK link backend in one go ([#98](https://github.com/Axect/Peroxide/issues/98))
+
+### Documentation
+- Restructure `README.md`, add quickstart and source layout ([#99](https://github.com/Axect/Peroxide/issues/99))
+- Expand optional feature documentation, document O3 backend selection and HDF5 1.x constraint ([#98](https://github.com/Axect/Peroxide/issues/98))
+- Point `documentation` URL to docs.rs, add Statement of need and examples links to the crate landing page
+- Fix docs.rs build ([#97](https://github.com/Axect/Peroxide/issues/97))
+- Expand `CONTRIBUTING.md`
+
+### CI / Lint
+- Test optional features in separate jobs ([#98](https://github.com/Axect/Peroxide/issues/98))
+- Promote `cargo clippy --all-targets` to a blocking job and clear all warnings across crate / tests / examples
+- Add `examples/clippy_verify.rs` determinism oracle for the Phase 2 lint refactor
+
+### Test
+- Strengthen `tests/optimize.rs` and `tests/integral.rs` suites
+
+### Paper
+- Add JOSS paper sources (`paper/paper.md`, `paper/paper.bib`), co-authors, and Acknowledgements
+- Add citations and trade-off discussion (lapack, ndarray, enzyme, openblas)
+
 # Release 0.41.0 (2026-03-15)
 
 ## Replace `enum AD` with const-generic `Jet<N>` (**Breaking Change**)

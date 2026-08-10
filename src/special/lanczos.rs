@@ -1,6 +1,6 @@
 //! Lanczos approximation Coefficient generator
 
-use crate::statistics::ops::{double_factorial, factorial, C};
+use crate::statistics::ops::{double_factorial, C};
 use crate::structure::matrix::Matrix;
 use crate::traits::matrix::MatrixTrait;
 use crate::traits::pointer::{Oxide, RedoxCommon};
@@ -23,29 +23,67 @@ const LG5N7: [f64; 7] = [
 ];
 
 pub fn ln_gamma_approx(z: f64) -> f64 {
+    if z <= 0.0 && z.fract() == 0.0 {
+        return f64::INFINITY;
+    }
+
+    // Positive integers up to 23 go through gamma_approx, whose factorial path is
+    // exact there (22! is the largest factorial representable in f64). This makes
+    // ln_gamma(1) and ln_gamma(2) return exactly 0 instead of about -1e-11, which
+    // matters for callers that subtract two log-gammas of equal argument. The bound
+    // keeps the branch cheap enough to stay on the hot path.
+    if z <= 23.0 && z.fract() == 0.0 {
+        return gamma_approx(z).ln();
+    }
+
+    if z < 0.5 {
+        return PI.ln() - (PI * z).sin().abs().ln() - ln_gamma_approx(1.0 - z);
+    }
+
     let z = z - 1f64;
     let base = z + G + 0.5;
     let mut s = 0f64;
-    for i in 1..N {
-        s += LG5N7[i] / (z + i as f64);
+    for (i, &c) in LG5N7.iter().enumerate().take(N).skip(1) {
+        s += c / (z + i as f64);
     }
     s += LG5N7[0];
     (2f64 * PI).sqrt().ln() + s.ln() - base + base.ln() * (z + 0.5)
 }
 
 pub fn gamma_approx(z: f64) -> f64 {
-    if z > 1f64 {
-        let z_int = z as usize;
-        if z - (z_int as f64) == 0f64 {
-            return factorial(z_int - 1) as f64;
+    if z <= 0.0 && z.fract() == 0.0 {
+        if z == 0.0 {
+            // tgamma(+0.0) is +inf and tgamma(-0.0) is -inf (C99, and what scipy
+            // returns). Plain `z == 0.0` matches both zeros, so branch on the sign.
+            return if z.is_sign_negative() {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            };
+        } else {
+            return f64::NAN;
         }
     }
 
-    if z < 0.5 {
-        PI / ((PI * z).sin() * gamma_approx(1f64 - z))
-    } else {
-        ln_gamma_approx(z).exp()
+    if z > 0.0 && z.fract() == 0.0 {
+        if z > 171.0 {
+            return f64::INFINITY;
+        }
+
+        let mut result = 1.0;
+        let n = (z - 1.0) as u64;
+        for i in 2..=n {
+            result *= i as f64;
+        }
+
+        return result;
     }
+
+    if z < 0.5 {
+        return PI / ((PI * z).sin() * gamma_approx(1f64 - z));
+    }
+
+    ln_gamma_approx(z).exp()
 }
 
 /// Lanczos Approximation Coefficient
@@ -114,8 +152,8 @@ fn f(g: f64, n: usize) -> f64 {
 
 fn f_gen(g: f64, n: usize) -> Vec<f64> {
     let mut v = vec![0f64; n + 1];
-    for i in 0..n + 1 {
-        v[i] = f(g, i);
+    for (i, slot) in v.iter_mut().enumerate() {
+        *slot = f(g, i);
     }
     v
 }

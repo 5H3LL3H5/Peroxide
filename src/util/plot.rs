@@ -13,37 +13,35 @@
 //!
 //! To use this module, you should enable `plot` feature in `Cargo.toml`
 //!
-//! ```
+//! ```no_run
 //! use peroxide::fuga::*;
 //!
-//! fn main() {
-//!     let x = linspace(0, 1, 100);
-//!     let y1 = x.fmap(|t| t.powi(2));
-//!     let y2 = x.fmap(|t| t.powi(3));
+//! let x = linspace(0, 1, 100);
+//! let y1 = x.fmap(|t| t.powi(2));
+//! let y2 = x.fmap(|t| t.powi(3));
 //!
-//!     let mut rng = SmallRng::seed_from_u64(42);
-//!     let normal = Normal(0f64, 0.1);
-//!     let eps = normal.sample_with_rng(&mut rng, x.len());
-//!     let y3 = y2.add_v(&eps);
+//! let mut rng = SmallRng::seed_from_u64(42);
+//! let normal = Normal(0f64, 0.1);
+//! let eps = normal.sample_with_rng(&mut rng, x.len());
+//! let y3 = y2.add_v(&eps);
 //!
-//!     let mut plt = Plot2D::new();
-//!     plt.set_domain(x)
-//!         .insert_image(y1)
-//!         .insert_image(y2)
-//!         .insert_image(y3)
-//!         .set_legend(vec![r"$y=x^2$", r"$y=x^3$", r"$y=x^2 + \epsilon$"])
-//!         .set_line_style(vec![(0, LineStyle::Dashed), (1, LineStyle::Dotted)])
-//!         .set_plot_type(vec![(2, PlotType::Scatter)])
-//!         .set_marker(vec![(2, Markers::Point)])
-//!         .set_color(vec![(0, "red"), (1, "darkblue"), (2, "olive")])
-//!         .set_xlabel(r"$x$")
-//!         .set_ylabel(r"$y$")
-//!         .set_style(PlotStyle::Nature) // if you want to use scienceplots
-//!         .set_dpi(600)
-//!         .tight_layout()
-//!         .set_path("example_data/test_plot.png")
-//!         .savefig().unwrap();
-//! }
+//! let mut plt = Plot2D::new();
+//! plt.set_domain(x)
+//!     .insert_image(y1)
+//!     .insert_image(y2)
+//!     .insert_image(y3)
+//!     .set_legend(vec![r"$y=x^2$", r"$y=x^3$", r"$y=x^2 + \epsilon$"])
+//!     .set_line_style(vec![(0, LineStyle::Dashed), (1, LineStyle::Dotted)])
+//!     .set_plot_type(vec![(2, PlotType::Scatter)])
+//!     .set_marker(vec![(2, Markers::Point)])
+//!     .set_color(vec![(0, "red"), (1, "darkblue"), (2, "olive")])
+//!     .set_xlabel(r"$x$")
+//!     .set_ylabel(r"$y$")
+//!     .set_style(PlotStyle::Nature) // if you want to use scienceplots
+//!     .set_dpi(600)
+//!     .tight_layout()
+//!     .set_path("example_data/test_plot.png")
+//!     .savefig().unwrap();
 //! ```
 //!
 //! This code will generate below plot
@@ -81,10 +79,10 @@ use self::pyo3::types::{IntoPyDict, PyDictMethods};
 use self::pyo3::{PyResult, Python};
 pub use self::Grid::{Off, On};
 use self::PlotOptions::{Domain, Images, Pairs, Path};
-use std::collections::HashMap;
-use std::fmt::Display;
 use std::borrow::BorrowMut;
+use std::collections::HashMap;
 use std::ffi::CString;
+use std::fmt::Display;
 
 type Vector = Vec<f64>;
 
@@ -261,6 +259,12 @@ pub struct Plot2D {
     tight: bool,
     plot_type: Vec<(usize, PlotType)>,
     options: HashMap<PlotOptions, bool>,
+}
+
+impl Default for Plot2D {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Plot2D {
@@ -504,8 +508,7 @@ impl Plot for Plot2D {
             let plot_type = self.plot_type.clone();
 
             // Global variables to plot
-            let mut globals =
-                vec![("plt", py.import("matplotlib.pyplot")?)].into_py_dict(py)?;
+            let mut globals = vec![("plt", py.import("matplotlib.pyplot")?)].into_py_dict(py)?;
             globals.borrow_mut().set_item("x", x)?;
             globals.borrow_mut().set_item("y", ys)?;
             globals.borrow_mut().set_item("pair", pairs)?;

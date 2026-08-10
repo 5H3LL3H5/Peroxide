@@ -42,7 +42,7 @@
 //! * `ExpLogOps`: `exp`, `ln`, `log`, `log2`, `log10`
 //! * `PowOps`: `powi`, `powf`, `pow`, `sqrt`
 //! * `TrigOps`: `sin_cos`, `sin`, `cos`, `tan`, `sinh`, `cosh`, `tanh`,
-//!              `asin`, `acos`, `atan`, `asinh`, `acosh`, `atanh`
+//!   `asin`, `acos`, `atan`, `asinh`, `acosh`, `atanh`
 //!
 //! ## Usage
 //!
@@ -386,7 +386,10 @@ pub type HyperDual = Jet<2>;
 /// Create a `Jet<0>` constant (zero-order, value only).
 #[inline]
 pub fn ad0(x: f64) -> Jet<0> {
-    Jet { value: x, deriv: [] }
+    Jet {
+        value: x,
+        deriv: [],
+    }
 }
 
 /// Create a `Jet<1>` with value and first derivative.
@@ -510,7 +513,10 @@ impl<const N: usize> Index<usize> for Jet<N> {
         } else if index <= N {
             &self.deriv[index - 1]
         } else {
-            panic!("Jet<{}> index {} out of bounds (max index = {})", N, index, N)
+            panic!(
+                "Jet<{}> index {} out of bounds (max index = {})",
+                N, index, N
+            )
         }
     }
 }
@@ -522,7 +528,10 @@ impl<const N: usize> IndexMut<usize> for Jet<N> {
         } else if index <= N {
             &mut self.deriv[index - 1]
         } else {
-            panic!("Jet<{}> index {} out of bounds (max index = {})", N, index, N)
+            panic!(
+                "Jet<{}> index {} out of bounds (max index = {})",
+                N, index, N
+            )
         }
     }
 }
@@ -941,7 +950,7 @@ impl<const N: usize> Jet<N> {
                 cs += ka * s.coeff(n - k);
             }
             s.set_coeff(n, ss / (n as f64));
-            c.set_coeff(n, cs / (n as f64));  // NO negative for cosh
+            c.set_coeff(n, cs / (n as f64)); // NO negative for cosh
         }
         (s, c)
     }

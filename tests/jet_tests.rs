@@ -97,6 +97,7 @@ fn test_ad2_internal_storage() {
 }
 
 #[test]
+#[allow(non_snake_case)]
 fn test_AD0_constructor() {
     let j = AD0(9.0);
     assert_close(j.value(), 9.0);
@@ -105,6 +106,7 @@ fn test_AD0_constructor() {
 }
 
 #[test]
+#[allow(non_snake_case)]
 fn test_AD1_constructor() {
     let j = AD1(3.0, 1.0);
     assert_close(j.value(), 3.0);
@@ -113,6 +115,7 @@ fn test_AD1_constructor() {
 }
 
 #[test]
+#[allow(non_snake_case)]
 fn test_AD2_constructor() {
     let j = AD2(5.0, 3.0, 4.0);
     assert_close(j.value(), 5.0);
@@ -655,11 +658,7 @@ fn test_sin_at_zero_jet10_derivative_cycle() {
     let y = x.sin();
     let expected = [0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0];
     for (k, &exp) in expected.iter().enumerate() {
-        assert_close_eps(
-            y.derivative(k),
-            exp,
-            1e-10,
-        );
+        assert_close_eps(y.derivative(k), exp, 1e-10);
     }
 }
 
@@ -693,11 +692,7 @@ fn test_cos_at_zero_jet10_derivative_cycle() {
     let y = x.cos();
     let expected = [1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0];
     for (k, &exp) in expected.iter().enumerate() {
-        assert_close_eps(
-            y.derivative(k),
-            exp,
-            1e-10,
-        );
+        assert_close_eps(y.derivative(k), exp, 1e-10);
     }
 }
 
@@ -897,8 +892,10 @@ fn test_real_trait_polynomial_ad() {
 
 #[test]
 fn test_jet0_constant_only() {
-    let j = ad0(3.14);
-    assert_close(j.value(), 3.14);
+    // Use an arbitrary, non-mathematical-constant value so that clippy's
+    // approx_constant lint does not mis-flag this as PI.
+    let j = ad0(1.5);
+    assert_close(j.value(), 1.5);
     // No derivatives in Jet<0>
     assert_close(j.dx(), 0.0);
     assert_close(j.ddx(), 0.0);
@@ -973,9 +970,9 @@ fn test_index_operator_jet1() {
 #[test]
 fn test_index_operator_jet2() {
     let j = ad2(5.0, 3.0, 4.0);
-    assert_close(j[0], 5.0);     // value
-    assert_close(j[1], 3.0);     // deriv[0] = dx
-    assert_close(j[2], 2.0);     // deriv[1] = ddx/2 = 4/2 = 2
+    assert_close(j[0], 5.0); // value
+    assert_close(j[1], 3.0); // deriv[0] = dx
+    assert_close(j[2], 2.0); // deriv[1] = ddx/2 = 4/2 = 2
 }
 
 #[test]
@@ -1027,14 +1024,14 @@ fn test_partial_ord_by_value() {
 fn test_display_jet1() {
     let j = ad1(3.0, 1.0);
     let s = format!("{}", j);
-    assert!(s.contains("3"), "display should contain value: {s}");
+    assert!(s.contains("3"), "display should contain value: {}", s);
 }
 
 #[test]
 fn test_display_jet0() {
     let j = ad0(2.5);
     let s = format!("{}", j);
-    assert!(s.contains("2.5"), "display should contain value: {s}");
+    assert!(s.contains("2.5"), "display should contain value: {}", s);
 }
 
 // =============================================================================
@@ -1106,26 +1103,19 @@ fn test_fpvector_fmap_jet1() {
 
 #[test]
 fn test_fpvector_sum_jet1() {
-    let v: Vec<Jet<1>> = vec![
-        ad1(1.0, 1.0),
-        ad1(2.0, 2.0),
-        ad1(3.0, 3.0),
-    ];
+    let v: Vec<Jet<1>> = vec![ad1(1.0, 1.0), ad1(2.0, 2.0), ad1(3.0, 3.0)];
     let s = v.sum();
     // FPVector::sum uses reduce(self[0], +) which double-counts first element
-    assert_close(s.value(), 7.0);  // 1 + (1+2+3)
+    assert_close(s.value(), 7.0); // 1 + (1+2+3)
     assert_close(s.dx(), 7.0);
 }
 
 #[test]
 fn test_fpvector_prod_jet1() {
-    let v: Vec<Jet<1>> = vec![
-        Jet::<1>::constant(2.0),
-        Jet::<1>::constant(3.0),
-    ];
+    let v: Vec<Jet<1>> = vec![Jet::<1>::constant(2.0), Jet::<1>::constant(3.0)];
     let p = v.prod();
     // FPVector::prod uses reduce(self[0], *) which double-counts first element
-    assert_close(p.value(), 12.0);  // 2 * (2*3)
+    assert_close(p.value(), 12.0); // 2 * (2*3)
 }
 
 // =============================================================================

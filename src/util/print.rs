@@ -1,5 +1,6 @@
 //! Easy to print any structures
 
+#[cfg(feature = "rand")]
 use crate::statistics::dist::*;
 use crate::statistics::stat::ConfusionMatrix;
 #[allow(unused_imports)]
@@ -10,8 +11,11 @@ use crate::structure::{
     multinomial::Multinomial,
     polynomial::Polynomial,
 };
+#[cfg(feature = "rand")]
 use rand_distr::uniform::SampleUniform;
-use std::fmt::{Debug, LowerExp, UpperExp};
+#[cfg(feature = "rand")]
+use std::fmt::Debug;
+use std::fmt::{LowerExp, UpperExp};
 
 pub trait Printable {
     fn print(&self);
@@ -355,13 +359,22 @@ impl Printable for Multinomial {
 //    }
 //}
 
+#[cfg(feature = "rand")]
 impl<T: Debug + PartialOrd + SampleUniform + Copy + Into<f64>> Printable for OPDist<T> {
     fn print(&self) {
         println!("{:?}", self);
     }
 }
 
+#[cfg(feature = "rand")]
 impl<T: Debug + PartialOrd + SampleUniform + Copy + Into<f64>> Printable for TPDist<T> {
+    fn print(&self) {
+        println!("{:?}", self);
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<T: Debug + PartialOrd + SampleUniform + Copy + Into<f64>> Printable for MVDist<T> {
     fn print(&self) {
         println!("{:?}", self);
     }
@@ -428,10 +441,8 @@ impl Printable for ConfusionMatrix {
 /// ```rust
 /// use peroxide::fuga::*;
 ///
-/// fn main() {
-///     let x = 123.456;
-///     assert_eq!(x.fmt_lower_exp(2), "1.23e+2");
-/// }
+/// let x = 123.456;
+/// assert_eq!(x.fmt_lower_exp(2), "1.23e+2");
 /// ```
 pub trait LowerExpWithPlus: LowerExp {
     fn fmt_lower_exp(&self, precision: usize) -> String {
@@ -457,10 +468,8 @@ impl LowerExpWithPlus for f64 {}
 /// ```rust
 /// use peroxide::fuga::*;
 ///
-/// fn main() {
-///     let x = 123.456;
-///     assert_eq!(x.fmt_upper_exp(2), "1.23E+2");
-/// }
+/// let x = 123.456;
+/// assert_eq!(x.fmt_upper_exp(2), "1.23E+2");
 /// ```
 pub trait UpperExpWithPlus: UpperExp {
     fn fmt_upper_exp(&self, precision: usize) -> String {

@@ -53,6 +53,7 @@
 //! use peroxide::fuga::*;
 //!
 //! fn main() {
+//!     # #[cfg(feature = "rand")] {
 //!     // To prepare noise
 //!     let normal = Normal(0f64, 0.1f64);
 //!     let normal2 = Normal(0f64, 100f64);
@@ -94,6 +95,7 @@
 //!     //        .set_marker(vec![Point, Line])
 //!     //        .savefig().expect("Can't draw a plot");
 //!     //}
+//!     # }
 //! }
 //!
 //! fn quad(x: &Vec<f64>, n: Vec<AD>) -> Option<Vec<AD>> {
@@ -308,14 +310,12 @@ where
                         break;
                     }
 
-                    let h: Matrix;
-
                     let b_lu = (jtj.clone() + lambda * jtj.to_diag()).lu();
                     if b_lu.det() == 0f64 {
                         break;
                     }
                     let b = b_lu.inv();
-                    h = b * j.t() * (&y - &y_hat);
+                    let h: Matrix = b * j.t() * (&y - &y_hat);
 
                     let p_temp = &p + &h;
                     match unsafe_f(p_temp.data.to_ad_vec()) {
